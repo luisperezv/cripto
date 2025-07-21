@@ -1,0 +1,1 @@
+feat: Add stablecoin filtering and popular token search
