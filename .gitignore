@@ -1,0 +1,8 @@
+# Archivos de ejecución y salida
+_runner.py
+output.txt
+
+# Carpetas de entorno de Python
+__pycache__/
+.venv/
+venv/
