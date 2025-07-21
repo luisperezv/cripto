@@ -5,11 +5,27 @@ import os
 from datetime import datetime, timedelta, timezone
 
 # --- Constantes de Configuración ---
+STABLECOIN_BLACKLIST = {
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # USDT
+    "USTCdDR9iHykMv51f6Vp3a1yGfg3ASkfvA1Rk1gpepU",   # UST (Terra)
+    "9vMJfxuKxXBoEa7rM12mYLMwP5yChFj2jXo3iDR3U5S2",  # USH
+    "A9mUU4qviSctJVPJdBJWkb28deg915LYJKrzQ19ji3FM",  # PAI
+    "Ea5SjE2Y6yvCeW5dYTn7PY2MCXVEkLdM9r1As5MVvaJL",  # mSOL
+    "USDH1SM1ojwWUga67PGrgA8eB2T12AgfCE15KVIor1s",   # USDH
+    "UxdJBfiHbdw2iMRJ1hA2oHk2Jd2172G1c32i8n22Y4Y",   # UXD
+}
 SOL_TOKEN_ADDRESS = "So11111111111111111111111111111111111111112"
+POPULAR_TOKEN_ADDRESSES = [
+    "EKpQGSFDjgmoocSBMDwPkabapDMHbQc8KzNFoYLtUqRM", # WIF
+    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", # BONK
+    "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", # POPCAT
+    "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82", # BOME
+]
 CHAIN_ID = "solana"
-MIN_LIQUIDITY_USD = 10000
-MIN_VOLUME_H24_USD = 10000
-MIN_AGE_HOURS = 12
+MIN_LIQUIDITY_USD = 100
+MIN_VOLUME_H24_USD = 100
+MIN_AGE_HOURS = 1
 N_TOP_PAIRS = 5
 MONITOR_INTERVAL_SECONDS = 5
 
@@ -20,33 +36,56 @@ def clear_screen():
 def buscar_pares_iniciales():
     """Busca y filtra los 5 pares principales para monitorear."""
     print("Iniciando la búsqueda de pares...")
-    url = f"https://api.dexscreener.com/latest/dex/search?q={SOL_TOKEN_ADDRESS}"
-    try:
-        print(f"Consultando API: {url}")
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        pares = data.get("pairs", [])
-        print(f"API encontró {len(pares)} pares en total.")
-    except requests.exceptions.RequestException as e:
-        print(f"Error al conectar con la API: {e}")
-        return []
+    all_pares = []
+    for token_address in POPULAR_TOKEN_ADDRESSES:
+        url = f"https://api.dexscreener.com/latest/dex/search?q={token_address}"
+        try:
+            print(f"Consultando API para {token_address}: {url}")
+            response = requests.get(url)
+            response.raise_for_status()
+            data = response.json()
+            pares = data.get("pairs", [])
+            print(f"API encontró {len(pares)} pares para {token_address}.")
+            all_pares.extend(pares)
+        except requests.exceptions.RequestException as e:
+            print(f"Error al conectar con la API para {token_address}: {e}")
+            continue
 
+    print(f"\nTotal de pares encontrados en todas las búsquedas: {len(all_pares)}.")
     # --- Filtrado ---
     print("\nIniciando filtrado de pares...")
     pares_filtrados = []
     ahora = datetime.now(timezone.utc)
     limite_antiguedad = ahora - timedelta(hours=MIN_AGE_HOURS)
-    print(f"Criterios: Liquidez > ${MIN_LIQUIDITY_USD}, Volumen (24h) > ${MIN_VOLUME_H24_USD}, Antigüedad > {MIN_AGE_HOURS} horas")
+    print(f"Criterios: Liquidez > ${MIN_LIQUIDITY_USD}, Volumen (24h) > ${MIN_VOLUME_H24_USD}, Antigüedad > {MIN_AGE_HOURS} horas, NO Stablecoin")
 
-
-    for i, par in enumerate(pares):
-        print(f"\n--- Analizando Par #{i+1}: {par.get('baseToken', {}).get('symbol')}/{par.get('quoteToken', {}).get('symbol')} ({par.get('pairAddress')[:10]}...) ---")
+    for i, par in enumerate(all_pares):
+        base_token_symbol = par.get('baseToken', {}).get('symbol', 'N/A')
+        quote_token_symbol = par.get('quoteToken', {}).get('symbol', 'N/A')
+        print(f"\n--- Analizando Par #{i+1}: {base_token_symbol}/{quote_token_symbol} ({par.get('pairAddress', '')[:10]}...) ---")
 
         if par.get("chainId") != CHAIN_ID:
             print(f"Descartado: chainId incorrecto ('{par.get('chainId')}')")
             continue
 
+        # Determinar la dirección del otro token
+        base_token_address = par.get("baseToken", {}).get("address")
+        quote_token_address = par.get("quoteToken", {}).get("address")
+        other_token_address = ""
+        other_token_symbol = ""
+
+        if base_token_address == SOL_TOKEN_ADDRESS:
+            other_token_address = quote_token_address
+            other_token_symbol = quote_token_symbol
+        else:
+            other_token_address = base_token_address
+            other_token_symbol = base_token_symbol
+
+        # Descartar si el otro token es un stablecoin
+        if other_token_address in STABLECOIN_BLACKLIST:
+            print(f"Descartado: {other_token_symbol} es un stablecoin ({other_token_address[:10]}...)")
+            continue
+            
         liquidity_usd = par.get("liquidity", {}).get("usd", 0)
         if liquidity_usd < MIN_LIQUIDITY_USD:
             print(f"Descartado: Liquidez insuficiente (${liquidity_usd:.2f})")
@@ -61,7 +100,7 @@ def buscar_pares_iniciales():
         if timestamp_creacion_ms:
             fecha_creacion = datetime.fromtimestamp(timestamp_creacion_ms / 1000, timezone.utc)
             if fecha_creacion > limite_antiguedad:
-                print(f"Descartado: Demasiado nuevo (Creado: {fecha_creacion.strftime('%Y-%m-%d')})")
+                print(f"Descartado: Demasiado nuevo (Creado: {fecha_creacion.strftime('%Y-%m-%d %H:%M')})")
                 continue
         else:
             print("Descartado: No tiene fecha de creación.")
